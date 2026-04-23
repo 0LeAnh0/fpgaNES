@@ -1,0 +1,479 @@
+﻿================================================================================
+  GIẢI THÍCH VERIFICATION NES_RAM + PPU_RI + PPU_BG + PPU_SPR + PPU_VGA + PPU_TOP
+================================================================================
+
+Tài liệu này giải thích ngắn gọn:
+- mỗi khối đang được verify cái gì
+- kết quả hiện tại ra sao
+- những điểm kỹ thuật dễ nhầm cần lưu ý
+- bài integration toàn khối PPU đang được tổ chức như thế nào
+
+================================================================================
+  PHẦN 1: Tổng quan
+================================================================================
+
+Trong project này, phần verification hiện tại gồm 6 nhóm:
+
+1. `nes_ram`
+   - gồm WRAM và VRAM
+
+2. `ppu_ri`
+   - register interface của PPU
+   - CPU giao tiếp với PPU chủ yếu qua khối này
+
+3. `ppu_bg`
+   - khối render background
+
+4. `ppu_spr`
+   - khối render sprite
+
+5. `ppu_vga`
+   - khối đổi palette index NES sang RGB/timing VGA
+
+6. `ppu_top`
+   - bài test tích hợp toàn khối PPU
+   - dùng để kiểm tra các đường liên kết giữa RI, BG, SPR, VGA
+
+Ý nghĩa:
+- block-level test chứng minh từng khối chạy đúng khi đứng riêng
+- integration test chứng minh cả cụm vẫn đúng khi ghép lại với nhau
+
+================================================================================
+  PHẦN 2: NES_RAM
+================================================================================
+
+Khối này verify:
+- WRAM mirror
+- WRAM/VRAM alias
+- data pattern
+- boundary walk
+- zero-page / stack
+- full sweep
+- initial reset
+- random reset stress
+
+Điểm đáng chú ý:
+- coverage đã được tách riêng WRAM và VRAM, không trộn chung như trước
+- monitor có tag để biết transaction đang thuộc WRAM hay VRAM
+
+Kết quả mới nhất:
+- `UVM_ERROR = 0`
+- `WRAM coverage = 100%`
+- `VRAM coverage = 100%`
+
+Kết luận:
+- với scope hiện tại, NES_RAM đã xanh và không còn khoảng hở chức năng đáng kể
+
+================================================================================
+  PHẦN 3: PPU_RI
+================================================================================
+
+PPU_RI là cửa ngõ điều khiển của PPU.
+CPU ghi/đọc qua các thanh ghi `$2000` đến `$2007`.
+
+Các hành vi đã verify:
+- đọc/ghi register cơ bản
+- latch hai lần ghi của `$2005` và `$2006`
+- buffered-read của `$2007`
+- side-effect tăng địa chỉ của `$2007`
+- đường OAM qua `$2003/$2004`
+- scroll mapping
+- initial reset
+- random reset stress
+
+Các bài test chính:
+- `ppu_ri_full_regression_test`
+- `ppu_ri_signoff_test`
+- `ppu_ri_scroll_signoff_test`
+
+Kết quả mới nhất:
+- `ppu_ri_full_regression_test: PASS=342 FAIL=0`
+- `ppu_ri_signoff_test: PASS=261 FAIL=0`
+- `coverage = 91.25%`
+
+Điểm rất quan trọng:
+- lỗi checker `$2007` trước đây đã được sửa xong
+
+Cách sửa `$2007 buffered-read`:
+1. Scoreboard không còn ghép master/slave theo kiểu “đến trước thì ghép trước”.
+2. Thay vào đó, scoreboard pair transaction theo đúng ngữ nghĩa giao thức.
+3. Slave monitor lấy mẫu `vram_din` ở thời điểm ổn định hơn.
+4. Scoreboard không reset nhầm read-buffer khi ghi `$2006`.
+
+Bài học:
+- với các hành vi có side-effect và độ trễ, không nên giả định “cùng cycle là cùng transaction”
+
+================================================================================
+  PHẦN 4: PPU_BG
+================================================================================
+
+PPU_BG chịu trách nhiệm render nền.
+
+Các điểm đã verify:
+- nhịp fetch 8 pixel
+  - dot0 -> NT
+  - dot1 -> AT
+  - dot2 -> PT0
+  - dot3 -> PT1
+- công thức sinh `vram_a_out`
+- scroll update từ RI sang BG
+- enable/disable rendering
+- pixel output / palette output
+- clip behavior
+- reset handling trong testbench và model
+- reset stress giữa lúc đang render
+
+Các bài test chính:
+- `ppu_bg_pixel_test`
+- `ppu_bg_full_regression_test`
+
+Kết quả mới nhất:
+- `ppu_bg_pixel_test: PASS=2772 FAIL=0`
+- `ppu_bg_full_regression_test: PASS=7784 FAIL=0`
+- `coverage = 95.93%`
+
+Điểm kỹ thuật dễ nhầm:
+- monitor dùng clocking block nên có phase shift tự nhiên so với combinational output
+- nếu scoreboard không có delay model phù hợp thì sẽ nhìn giống như fetch lệch 1 nhịp
+
+Cách đã làm:
+- scoreboard dùng delayed prediction
+- reset sẽ flush prediction queue để tránh dính giá trị cũ
+- coverage model không còn tính bin `clip_on + non_zero_palette` vì đó không phải trạng thái có ý nghĩa với DUT
+- full regression có thêm một targeted coverage sequence cho vblank / pre-render / scroll extremes
+
+================================================================================
+  PHẦN 5: PPU_SPR
+================================================================================
+
+PPU_SPR phụ trách sprite:
+- OAM
+- evaluation
+- fetch
+- render output
+- primary / priority
+- overflow
+
+Các bài test chính:
+- `ppu_spr_full_regression_test`
+- `ppu_spr_full_frame_test`
+
+Những gì full regression hiện đã có:
+- initial reset
+- random reset stress
+- overflow exercise
+- render / force-hit / complex scenarios
+- full-frame walk
+
+Kết quả mới nhất:
+- `ppu_spr_full_regression_test: PASS=1758050 FAIL=0`
+- `coverage = 100.00%`
+
+Điểm kỹ thuật rất quan trọng:
+- overflow của DUT không chỉ phụ thuộc vào việc “có hơn 8 sprite”
+- nó phụ thuộc vào cách testbench trình bày `nes_y_next_in`, vì chính tín hiệu này được dùng cho logic next-scanline evaluation
+
+Cách đã làm:
+- sequence overflow được sửa để giữ `nes_y_next_in = y + 1` xuyên suốt cửa sổ evaluate
+- full regression chạy overflow cho cả `8x8` và `8x16`
+- thêm một pha render đảo priority để đóng nốt tổ hợp `primary/priority`
+
+================================================================================
+  PHẦN 6: PPU_VGA
+================================================================================
+
+PPU_VGA là khối đầu ra VGA.
+
+Những điểm RTL đã verify:
+- RGB output trễ 1 clock vì `q_rgb <= d_rgb`
+- `pix_pulse_out`
+- border color = `8'h49`
+- `vblank_out` set/clear tại đúng tọa độ timing
+
+Các bài test chính:
+- `ppu_vga_reset_test`
+- `ppu_vga_palette_visible_area_test`
+- `ppu_vga_border_color_test`
+- `ppu_vga_vblank_timing_test`
+- `ppu_vga_full_regression_test`
+
+Kết quả mới nhất:
+- `ppu_vga_full_regression_test: PASS`
+- `VGA_SCB_RPT: PASS=26626128 FAIL=0`
+- `coverage = 100.00%`
+
+Điểm kỹ thuật dễ nhầm:
+- RGB không thể check cùng cycle với decode tổ hợp
+- phải check với nhận thức rõ là đầu ra đã bị trễ 1 clock
+
+Cách đã làm thêm để coverage phản ánh đúng thực chất:
+- cross giữa `area` và `palette` chỉ còn được tính cho visible area
+- các vùng border/blank không còn kéo coverage xuống bởi những bin không có ý nghĩa chức năng
+
+================================================================================
+  PHẦN 7: PPU_TOP Integration
+================================================================================
+
+Đây là phần rất quan trọng theo kiểu công nghiệp.
+
+Sau khi các block riêng lẻ đã xanh, bài test top-level sẽ kiểm tra các đường tương tác thật
+giữa các block.
+
+Hiện tại bài integration chính là:
+- `ppu_full_integration_test`
+
+Các đường đã verify:
+1. `RI -> PRAM -> top palette mux -> VGA RGB`
+2. `RI -> OAM -> SPR request -> top VRAM arbiter`
+3. `RI -> OAM -> SPR overflow observed through top path`
+4. `RI vblank + NMI enable -> top /VBL output`
+5. live PRAM update trong lúc active display
+6. bật/tắt NMI trong lúc đang active vblank
+7. reset đầu bài ở mức top trước khi bắt đầu traffic tích hợp
+
+Kết quả mới nhất:
+- `UVM_ERROR = 0`
+- `PPU_TOP_COV = 88.43%`
+- `PPU_TOP_SCB_RPT: PASS=9589785 FAIL=0`
+
+Điểm cần hiểu đúng theo kiểu công nghiệp:
+- `PPU_TOP_COV` không phải coverage cộng dồn của `RI/BG/SPR/VGA`
+- đây là coverage mức subsystem
+- nó chỉ đo các hành vi liên khối như:
+  - arbiter
+  - final palette mux
+  - `/VBL` gating
+  - PRAM write interaction
+  - sprite overflow nhìn thấy ở mức top
+
+================================================================================
+  PHẦN 8: Vì sao bài integration đã được làm lại?
+================================================================================
+
+Trước đó, bài integration chạy được nhưng kiến trúc chưa đủ “sạch” để nhìn theo kiểu công nghiệp.
+
+Điểm chưa đẹp:
+- test top dựa vào `ppu_ri_base_test`
+- nhìn vào sẽ dễ hiểu nhầm là “đang tái dùng test RI” hơn là “đang có một môi trường top-level thực sự”
+
+Hiện tại đã refactor lại:
+- có `ppu_top_base_test` riêng
+- có `ppu_top_env` riêng
+- `ppu_top_env` sở hữu:
+  - RI master/slave agents để tạo stimulus thật qua đường register
+  - top monitor
+  - top subscriber
+  - top coverage
+  - top scoreboard
+
+Ý nghĩa của cách làm này:
+- dễ hiểu hơn
+- dễ debug hơn
+- dễ mở rộng thành các test integration khác
+- dễ kế thừa hơn cho signoff sau này
+- log top-level cũng gọn hơn vì đã chặn bớt `UVM_INFO` nội bộ của RI trong integration run
+
+================================================================================
+  PHẦN 9: Những điểm kỹ thuật cần ghi nhớ khi làm testbench
+================================================================================
+
+Phần này không chỉ dành cho bug. Đây là các nguyên tắc kỹ thuật dễ quên khi làm TB/UVM.
+Nếu lần này làm đúng nhưng lần sau quên, rất dễ tự tạo ra false fail hoặc testbench khó maintain.
+
+### 9.1) Clock capture phải được nghĩ theo góc nhìn monitor
+Điểm cần nhớ:
+- monitor không phải lúc nào cũng nhìn thấy DUT ở đúng cùng thời điểm mà DUT vừa đổi giá trị
+- với clocking block, thứ monitor thấy là “ảnh chụp có timing”, không phải zero-delay raw signal
+
+Trong project này đã xử lý như sau:
+- BG cần delayed prediction vì monitor và combinational fetch output không trùng pha
+- VGA phải check với nhận thức rằng RGB ra trễ 1 clock
+- RI buffered-read không thể so kiểu “master thấy gì thì slave phải cùng cycle như vậy”
+- monitor/checker được đặt theo thời điểm output thật sự có nghĩa, không chỉ theo cạnh clock đầu tiên nhìn thấy tín hiệu đổi
+
+Kết luận thực hành:
+- trước khi viết checker, phải xác định rõ:
+  - DUT update ở cạnh nào
+  - monitor sample ở cạnh nào
+  - output đó là combinational hay registered
+
+### 9.2) Reset không chỉ là kéo chân reset xuống rồi bỏ
+Điểm cần nhớ:
+- reset tốt phải có 2 phần:
+  - drive reset
+  - verify post-reset observable state
+
+Trong project này đã xử lý như sau:
+- RAM, RI, BG, SPR đều có initial reset và/hoặc random reset stress tùy mức cần thiết
+- top integration cũng bắt đầu bằng một reset-observe case riêng
+- phần reset được gom vào base test/helper để các test sau tái dùng cùng một chuẩn reset thay vì viết rời rạc
+
+Kết luận thực hành:
+- nếu base test không sở hữu reset rõ ràng, rất dễ có test pass nhờ state khởi động tình cờ
+
+### 9.3) Scoreboard phải bám ngữ nghĩa giao thức, không chỉ bám giá trị tức thời
+Điểm cần nhớ:
+- với các đường có latch, buffer, side-effect, multi-write hoặc increment mode,
+  compare theo cycle đơn thuần rất dễ sai
+
+Trong project này đã xử lý như sau:
+- RI scoreboard model hóa:
+  - latch `$2005/$2006`
+  - buffered-read `$2007`
+  - increment side-effect
+- top scoreboard model hóa:
+  - palette path
+  - VRAM arbiter
+  - `/VBL` gating
+- BG/VGA cũng không so kiểu mirror giá trị tức thời mà dùng prediction theo bản chất output
+
+Kết luận thực hành:
+- nếu feature có “ý nghĩa giao thức”, scoreboard cũng phải có model giao thức tương ứng
+
+### 9.4) Integration test nên có quyền sở hữu kiến trúc rõ ràng
+Điểm cần nhớ:
+- bài top-level nên nhìn ra ngay nó là bài top-level
+- nếu cứ kéo thẳng base test của sub-block lên dùng lại, lâu dài sẽ khó đọc và khó debug
+
+Trong project này đã xử lý như sau:
+- integration đã được tách thành:
+  - `ppu_top_base_test`
+  - `ppu_top_env`
+  - RI agents nằm trong top env
+  - top monitor / subscriber / coverage / scoreboard riêng
+- stimulus RI vẫn được giữ để giống đường CPU thật, nhưng ownership được dời vào top env để kiến trúc rõ ràng hơn
+
+Kết luận thực hành:
+- ownership rõ ràng giúp kế thừa test dễ hơn và reviewer cũng hiểu nhanh hơn
+
+### 9.4B) Coverage của top-level phải là coverage của subsystem, không phải bản sao của từng block
+Điểm cần nhớ:
+- block coverage và subsystem coverage trả lời hai câu hỏi khác nhau
+- top-level không nên cố "ôm" lại toàn bộ coverpoint nội bộ của từng block
+
+Trong project này đã xử lý như sau:
+- `PPU_RI_COV`, `BG_COV`, `SPR_COV`, `VGA_COV` vẫn là metric signoff chi tiết của từng block
+- `PPU_TOP_COV` chỉ giữ các coverpoint có ý nghĩa integration
+- khi thấy subsystem cần đo thêm, ví dụ `sprite overflow observed through top path`, thì mở rộng `ppu_full_integration_test` và `ppu_top_cov` đúng chỗ đó
+
+Kết luận thực hành:
+- coverage top-level nên đo "hành vi khi ghép khối", không nên thay thế coverage đào sâu nội bộ block
+
+### 9.5) Trước khi viết checker phải phân loại output là combinational hay registered
+Điểm cần nhớ:
+- nhiều false fail không đến từ logic DUT sai mà đến từ việc TB hiểu sai bản chất đầu ra
+- một tín hiệu registered thường phải compare trễ hơn một nhịp hoặc theo state đã chốt
+- một tín hiệu combinational lại cần chú ý đúng pha sample của monitor
+
+Trong project này đã xử lý như sau:
+- VGA được check với nhận thức rõ `q_rgb <= d_rgb`, nên RGB phải so sau 1 clock
+- BG dùng delayed prediction thay vì so ngay tại lúc address/pixel vừa đổi
+- RI `$2007` không được kiểm theo kiểu “thấy địa chỉ nào thì dữ liệu phải về ngay theo địa chỉ đó”
+- trước khi hoàn thiện checker, output được phân loại rõ xem là decode tức thời hay đầu ra đã qua thanh ghi
+
+Kết luận thực hành:
+- trước khi viết scoreboard, nên ghi rõ cho từng output:
+  - nó là combinational hay registered
+  - nó phụ thuộc state hiện tại hay state vừa chốt ở clock trước
+
+### 9.6) Timeout phải đi theo bản chất timing của block
+Điểm cần nhớ:
+- block kiểu register interface có thể chạy rất nhanh
+- block kiểu scanline / frame / VGA timing lại cần thời gian mô phỏng dài hơn rất nhiều
+- nếu timeout đặt theo cảm tính, test dễ fail giả dù DUT hoàn toàn đúng
+
+Trong project này đã xử lý như sau:
+- VGA cần chạy đủ vùng timing để chạm visible area, border, và điểm set/clear `vblank_out`
+- SPR full-frame cần đủ chiều dài frame để kiểm hành vi qua boundary
+- top integration cũng phải đủ dài để quan sát đường `RI -> ... -> /VBL` và các tương tác liên khối
+- timeout của base test được nới theo mục tiêu quan sát thay vì dùng chung một mốc cho mọi bài
+
+Kết luận thực hành:
+- timeout nên được tính từ hành vi cần thấy, không nên lấy một giá trị chung cho mọi block
+
+### 9.7) Force/release và debug hook phải có kỷ luật rõ ràng
+Điểm cần nhớ:
+- force là công cụ mạnh nhưng rất dễ làm test “pass giả” nếu quên release hoặc dùng rộng quá mức
+- debug hook nếu để bật mặc định sẽ làm môi trường mô phỏng khó hiểu và khó bàn giao
+
+Trong project này đã xử lý như sau:
+- các điểm debug/log trong top TB đã được đổi sang opt-in
+- integration giữ quyền quan sát top-level rõ ràng thay vì chèn hook rải rác khắp nơi
+- flow chuẩn hiện không sinh transcript hay diagnostic file nếu người chạy không chủ động bật
+- các knob debug được đưa về TB/Makefile với trạng thái mặc định là tắt
+
+Kết luận thực hành:
+- mọi force/debug hook nên có:
+  - mục đích rõ ràng
+  - điểm bật/tắt rõ ràng
+  - trạng thái mặc định là tắt
+
+### 9.8) Log và debug file phải là opt-in
+Điểm cần nhớ:
+- verification rất dễ sinh rác:
+  - transcript
+  - sim log riêng
+  - diagnostic log
+  - file log từ report catcher
+
+Trong project này đã xử lý như sau:
+- `sim_diag.log` chỉ tạo khi bật `+TB_DIAG_LOG=1`
+- file log riêng của RAM đã tắt mặc định
+- Makefile dọn log tạm sau run nếu không bật `KEEP_LOGS=1`
+- transcript chuẩn của Questa đã bị chặn trong flow chính
+- log phụ vẫn giữ được khi cần, nhưng chỉ xuất hiện nếu người chạy chủ động bật
+
+Kết luận thực hành:
+- mặc định nên sạch
+- chỉ bật log phụ khi thật sự cần debug
+
+================================================================================
+  PHẦN 10: Coverage còn hở gì?
+================================================================================
+
+`NES_RAM`
+- Đã kín trong scope hiện tại
+
+`PPU_RI`
+- còn khoảng hở về độ sâu tổ hợp hiếm
+- không còn bug mở ở checker `$2007`
+
+`PPU_BG`
+- phần lõi đã dày lên rõ rệt
+- remaining gap chủ yếu còn là long-run density, không phải lỗ hổng chức năng rõ ràng
+
+`PPU_SPR`
+- đã kín trong scope hiện tại
+
+`PPU_VGA`
+- đã kín trong scope hiện tại
+
+`PPU_TOP`
+- hiện đã cover tốt các đường tích hợp chính và đã có thêm sprite overflow ở mức top
+- có thể mở rộng thêm:
+  - BG/SPR overlap
+  - top-level priority cases
+  - frame-boundary dài hơn
+  - PRAM mirror / palette interaction ở mức subsystem
+
+================================================================================
+  PHẦN 11: Kết luận cuối cùng
+================================================================================
+
+Trạng thái hiện tại:
+
+- `NES_RAM`: PASS, coverage 100% / 100%
+- `PPU_RI`: PASS, coverage 91.25%
+- `PPU_BG`: PASS, coverage 95.93%
+- `PPU_SPR`: PASS, coverage 100.00%
+- `PPU_VGA`: PASS, coverage 100.00%
+- `PPU_TOP integration`: PASS, coverage 88.43%
+
+Ý nghĩa thực tế:
+- các block chính đã xanh
+- bài integration toàn khối PPU cũng đã xanh
+- phần còn lại chủ yếu là mở rộng subsystem scenarios nếu muốn signoff sâu hơn nữa, không phải chữa bug đỏ đang mở
+
+================================================================================
+  Công cụ: QuestaSim + UVM 1.1d + Vivado
+================================================================================

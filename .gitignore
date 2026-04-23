@@ -1,0 +1,37 @@
+# Vivado generated directories
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+.Xil/
+
+# Questa/ModelSim generated artifacts
+work/
+transcript
+modelsim.ini
+vsim.wlf
+*.wlf
+*.ucdb
+*.qdb
+*.qpg
+*_opt/
+_dpi/
+_info
+_vmake
+
+# Coverage and simulation reports
+covhtmlreport/
+fcov_html/
+coverage/
+cov_*/
+*.log
+
+# Local scratch / tooling output
+brain/
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
