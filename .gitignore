@@ -26,6 +26,7 @@ fcov_html/
 coverage/
 cov_*/
 *.log
+*.docx
 
 # Local scratch / tooling output
 brain/
