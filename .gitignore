@@ -6,6 +6,9 @@
 *.sim/
 .Xil/
 
+# Third-party RTL kept out of the public repo
+nes_fpga.srcs/sources_1/imports/src/
+
 # Questa/ModelSim generated artifacts
 work/
 transcript
