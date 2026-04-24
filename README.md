@@ -8,7 +8,7 @@ Publicly included:
 - verification scripts and reports
 
 Excluded from the public repository:
-- RTL source files under `nes_fpga.srcs/sources_1/imports/src/`
+- RTL source: https://github.com/brianbennett/fpga_nes
 
 The RTL source is a third-party design reference and is intentionally kept out of the public repo.
 To run full simulations locally, place the RTL back into the expected Vivado source tree on your machine.
