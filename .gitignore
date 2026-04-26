@@ -29,6 +29,7 @@ fcov_html/
 coverage/
 cov_*/
 *.log
+uart_regression_transcript.txt
 *.docx
 
 # Local scratch / tooling output

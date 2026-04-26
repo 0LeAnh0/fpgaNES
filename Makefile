@@ -7,6 +7,7 @@ export LM_LICENSE_FILE := D:/questasim/win64/LICENSE.dat
 QUESTA_BIN  := D:/questasim/win64
 UVM_SRC     := D:/questasim/verilog_src/uvm-1.1d/src
 TEST        ?= ppu_ri_full_regression_test
+SIM_TOP     := $(if $(filter uart_%,$(TEST)),work.uart_tb_top,work.tb_top)
 
 # Project Paths
 ROOT        := $(CURDIR)
@@ -91,6 +92,7 @@ compile: work check-dirs
 		"./nes_fpga.srcs/sources_1/imports/src/wram.v"
 	@echo "--- Compiling Testbench (SystemVerilog) ---"
 	"$(QUESTA_BIN)/vlog" -sv -work work -timescale 1ns/1ps $(INC_FLAGS) $(VLOG_CODE_COV) \
+		"./nes_fpga.srcs/sim_1/imports/src/uart_agt/if/uart_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/nes_ram_agt/if/vram_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/nes_ram_agt/if/wram_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_bg_if.sv" \
@@ -99,13 +101,15 @@ compile: work check-dirs
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_vga_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_top_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/tb_if/tb_ctrl_if.sv" \
+		"./nes_fpga.srcs/sim_1/imports/src/pkg/uart_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/nes_ram_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_bg_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_ri_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_spr_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_vga_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_top_pkg.sv" \
-		"./nes_fpga.srcs/sim_1/imports/src/nes_tb_top.sv"
+		"./nes_fpga.srcs/sim_1/imports/src/nes_tb_top.sv" \
+		"./nes_fpga.srcs/sim_1/imports/src/uart_tb_top.sv"
 
 compile-fcov: work check-dirs
 	@echo "--- Compiling UVM Package (Functional Coverage Focus) ---"
@@ -140,6 +144,7 @@ compile-fcov: work check-dirs
 		"./nes_fpga.srcs/sources_1/imports/src/wram.v"
 	@echo "--- Compiling Testbench with functional covergroups ---"
 	"$(QUESTA_BIN)/vlog" -sv -work work -timescale 1ns/1ps $(INC_FLAGS) \
+		"./nes_fpga.srcs/sim_1/imports/src/uart_agt/if/uart_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/nes_ram_agt/if/vram_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/nes_ram_agt/if/wram_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_bg_if.sv" \
@@ -148,17 +153,19 @@ compile-fcov: work check-dirs
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_vga_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/ppu_agt/ppu_if/ppu_top_if.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/tb_if/tb_ctrl_if.sv" \
+		"./nes_fpga.srcs/sim_1/imports/src/pkg/uart_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/nes_ram_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_bg_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_ri_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_spr_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_vga_pkg.sv" \
 		"./nes_fpga.srcs/sim_1/imports/src/pkg/ppu_top_pkg.sv" \
-		"./nes_fpga.srcs/sim_1/imports/src/nes_tb_top.sv"
+		"./nes_fpga.srcs/sim_1/imports/src/nes_tb_top.sv" \
+		"./nes_fpga.srcs/sim_1/imports/src/uart_tb_top.sv"
 
 questa: compile
 	@echo "--- Running Simulation: $(TEST) ---"
-	"$(QUESTA_BIN)/vsim" -c -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" -l $(SIM_LOG) -coverage +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(UCDB_FILE); quit -f"
+	"$(QUESTA_BIN)/vsim" -c -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" -l $(SIM_LOG) -coverage +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(UCDB_FILE); quit -f"
 	@if [ ! -f $(UCDB_FILE) ]; then \
 		echo "Warning: coverage database $(UCDB_FILE) was not created. Use 'make cov-gui TEST=$(TEST)' for live coverage GUI."; \
 	fi
@@ -166,6 +173,8 @@ questa: compile
 	@grep -E '$(UVM_SUMMARY)' $(SIM_LOG) || true
 	@if echo "$(TEST)" | grep -q "^nes_ram_"; then \
 		grep -E 'RAM_COV|SCB_REPORT' $(SIM_LOG) || true; \
+	elif echo "$(TEST)" | grep -q "^uart_"; then \
+		grep -E 'UART_COV|UART_SCB_RPT' $(SIM_LOG) || true; \
 	elif echo "$(TEST)" | grep -q "^ppu_bg_"; then \
 		grep -E 'BG_COV|BG_SCB_RPT' $(SIM_LOG) || true; \
 	elif echo "$(TEST)" | grep -q "^ppu_spr_"; then \
@@ -177,7 +186,7 @@ questa: compile
 	elif echo "$(TEST)" | grep -q "^ppu_ri_"; then \
 		grep -E 'PPU_RI_COV|SCB_RPT' $(SIM_LOG) || true; \
 	else \
-		grep -E 'RAM_COV|BG_COV|SPR_COV|VGA_COV|PPU_TOP_COV|PPU_RI_COV|SCB_RPT|BG_SCB_RPT|SPR_SCB_RPT|VGA_SCB_RPT|PPU_TOP_SCB_RPT|SCB_REPORT' $(SIM_LOG) || true; \
+		grep -E 'UART_COV|UART_SCB_RPT|RAM_COV|BG_COV|SPR_COV|VGA_COV|PPU_TOP_COV|PPU_RI_COV|SCB_RPT|BG_SCB_RPT|SPR_SCB_RPT|VGA_SCB_RPT|PPU_TOP_SCB_RPT|SCB_REPORT' $(SIM_LOG) || true; \
 	fi
 	@if [ "$(KEEP_LOGS)" != "1" ]; then \
 		rm -f $(SIM_LOG) $(RTL_LOG) sim_diag.log transcript; \
@@ -186,16 +195,16 @@ questa: compile
 
 questa-gui: compile
 	@echo "--- Opening Questasim GUI ---"
-	"$(QUESTA_BIN)/vsim" -onfinish stop -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all"
+	"$(QUESTA_BIN)/vsim" -onfinish stop -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all"
 
 cov-gui: compile
 	@echo "--- Opening Live Coverage GUI ($(TEST)) ---"
-	"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(UCDB_FILE); view covergroups"
+	"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(UCDB_FILE); view covergroups"
 
 cov-open:
 	@if [ ! -f $(UCDB_FILE) ]; then \
 		echo "$(UCDB_FILE) not found. Opening live coverage GUI for TEST=$(TEST) instead."; \
-		"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(UCDB_FILE); view covergroups"; \
+		"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(UCDB_FILE); view covergroups"; \
 		exit 0; \
 	fi
 	@echo "--- Opening Coverage GUI ($(UCDB_FILE)) ---"
@@ -203,11 +212,11 @@ cov-open:
 
 fcov: compile-fcov
 	@echo "--- Running Functional Coverage Simulation: $(TEST) ---"
-	"$(QUESTA_BIN)/vsim" -c -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" -l $(SIM_LOG) -coverage +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(FCOV_UCDB_FILE); quit -f"
+	"$(QUESTA_BIN)/vsim" -c -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" -l $(SIM_LOG) -coverage +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(FCOV_UCDB_FILE); quit -f"
 	@if [ ! -f $(FCOV_UCDB_FILE) ]; then \
 		echo "Warning: functional coverage database $(FCOV_UCDB_FILE) was not created."; \
 	fi
-	@grep -E 'RAM_COV|BG_COV|SPR_COV|VGA_COV|PPU_TOP_COV|PPU_RI_COV' $(SIM_LOG) || true
+	@grep -E 'UART_COV|RAM_COV|BG_COV|SPR_COV|VGA_COV|PPU_TOP_COV|PPU_RI_COV' $(SIM_LOG) || true
 	@if [ "$(KEEP_LOGS)" != "1" ]; then \
 		rm -f $(SIM_LOG) $(RTL_LOG) sim_diag.log transcript; \
 		rmdir $(LOG_DIR) 2>/dev/null || true; \
@@ -215,12 +224,12 @@ fcov: compile-fcov
 
 fcov-gui: compile-fcov
 	@echo "--- Opening Functional Coverage GUI ($(TEST)) ---"
-	"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(FCOV_UCDB_FILE); view covergroups"
+	"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(FCOV_UCDB_FILE); view covergroups"
 
 fcov-open:
 	@if [ ! -f $(FCOV_UCDB_FILE) ]; then \
 		echo "$(FCOV_UCDB_FILE) not found. Running functional coverage GUI for TEST=$(TEST) instead."; \
-		"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) work.tb_top -do "run -all; coverage save $(FCOV_UCDB_FILE); view covergroups"; \
+		"$(QUESTA_BIN)/vsim" -onfinish stop -coverage -voptargs="+acc" -sv_lib "D:/questasim/uvm-1.1d/win64/uvm_dpi" +UVM_TESTNAME=$(TEST) $(SIM_TOP) -do "run -all; coverage save $(FCOV_UCDB_FILE); view covergroups"; \
 		exit 0; \
 	fi
 	@echo "--- Opening Functional Coverage GUI ($(FCOV_UCDB_FILE)) ---"
